@@ -1,0 +1,225 @@
+﻿Types of API Security
+
+Network Level - Whitelisting and blacklisting: Great for private access, terrible for
+public access as you'd have to keep track of all the IP addresses to allow or dis-allow.
+So it becomes and administration nightmare.
+
+
+Basic Authentication: Simple to administrate but causes database overhead with calls
+back and forth to authenticate and then hit the DB for the API calls. System level
+overhead is high.
+
+Api Key Access: Uses a token/key that is generated and given to the client and then
+the client uses that key that you have to decode/validate before you allow them access
+to the resource. If someone gets access to the key they can spoof/pretend to be the client
+and get access from somewhere else.
+
+JSON WebToken (JWT) : The industry standard. An issued and encoded token with a lifespan.
+Its not meant to be super secure. Don't include sensitive info in the token. It will
+contain basic bits of information to identify them. The user would authenticate once 
+and then we give them a token. We then inspect that token each time the client attempts
+to access the resouce. Also the token has a lifespan, say 30 minutes. So vulnerability
+is limited by time or to a small time window. We will use this.
+
+User Identity Core: So in our Program.cs file add the following between the 
+builder.Services.AddDbContext and builder.Services.AddControllers
+
+builder.Services.AddIdentityCore<IdentityUser>()
+    .AddRoles<IdentityRole>()
+    .AddEntityFrameworkStores<HotelListingDbContext>();
+
+We're going to extend the IdentityUser class for customization with this class that 
+extends/inherits from IdentityUser:
+
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+
+namespace HotelListing.API.Data
+{
+    public class ApiUser : IdentityUser
+    {
+        public string FirstName { get; set; }
+        public string LastName { get; set; }
+    }
+}
+
+The DbContext needs to know that its responsible for storing our Identity stuff too.
+
+When we add IndentityCore it needs to be added relative to a user type.
+<IdentityUser> is the default user.
+We then need to add the facility of Roles. "Who are you and what can you do?"
+We then add which datastore (data base context) to use. Add Entity Framework Stores
+So read that like your Adding a place to Store your Entity Framework of these new 
+Identity/Role tables and all of their supplemental tables. Your naming a place to
+store those tables. In this case its our HotelListingDbContext, but it could be a 
+dedicated "Identity Server" server where the DB lives that will hold all of the 
+tables as well. This db will store all the users, and their roles and all of the 
+supplemental meta data tables etc.
+
+    builder.Services.AddIdentityCore<IdentityUser>()
+        .AddRoles<IdentityRole>()
+        .AddEntityFrameworkStores<HotelListingDbContext>();
+
+<IdentityUser> comes will all of the basic and standard properties. But we have
+customized and extended it with our custom properties in our ApiUser class. So
+we're just inheriting all of the given properties from <IdentityUser> PLUS our on
+properties: FirstName, and LastName
+
+    public class ApiUser : IdentityUser
+    {
+        public string FirstName { get; set; }
+        public string LastName { get; set; }
+    }
+
+AddIdentityUser<> will only except and type of IdentityUser and in this case, since
+we extended and inherited from IdentityUser with our ApiUser class above we can put
+that class in place for the type/class that IdentityUser is expecting.
+
+AddIdentityUser<ApiUser>
+
+Adding User Roles : "Configuration Folder/Files" - So setting up this/these config-
+-uration file is doing more "code first" set up / building of the tables for the
+user roles data. Seeding the data for those tables like we did with the Hotels and
+Country entities.
+
+So next/now we set up a way for the users to authenticate themselves. So at this point,
+let's say the app has been built around the api and we now want to allow the users
+to be able to register or be registered. This is a way that we're securing the app/api.
+
+So 1st we create a new interface/contract. Then a new Dto to accept the fields that 
+we want/need when we're creating a new user. Side Note: Identity Core has some of its
+own, default behavior for password standards/requirements/validation but we'll add 
+our own as well.
+
+    [Required]
+    [StringLength(15, ErrorMessage = "Your Password is limited to {2} to {1} characters",
+        MinimumLength = 6)]
+    public int Password { get; set; }
+
+When we put a return statement such as the following into our endpoint, it allows for the
+error message to be returned in the response and shows up in the Response body like so:
+
+Response body
+Download
+{
+  "DuplicateUserName": [
+    "Username 'user@example.com' is already taken."
+  ]
+}
+
+ADDING JWT (JSON WEB TOKEN)AUTHENTICATION 
+1st Step: 
+    NuGet Package Manager -> Manage NuGet Packages for Solution...
+     Add Microsoft.AspNetCore.Authentication.JwtBearer
+2nd Step: 
+    In the Program.cs file add the following to describe how we want our JWT auth-
+    -entication set up and working
+
+    builder.Services.AddAuthentication(options => {
+        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    }).AddJwtBearer( options => {  
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.Zero,
+            ValidIssuer = "",
+            ValidAudience = "",
+            IssuerSigningKey = new SymmetricSecurityKey()
+        };
+    });
+
+Then in the appsettings.json file we add a new configuration to set some initial
+values for the JWT authentication configuration object/process that we registered in the
+Program.cs file
+
+    "JwtSettings": {
+    "Issuer": "HotelListingAPI", //our API is the issuer
+    "Audience": "HotelListingAPIClient", //any one consumingour API
+    "Duration": 10, //how long we want the token to be valid
+    "Key": "YourSuperSecretKey" //gets generated in the Program.cs file
+  }
+
+Once we set up our JwtSettings object in the appsettings.json file we now set the 
+missing values for the JWT Authentication object that we registered previously in
+the Program.cs file.
+
+    builder.Services.AddAuthentication(options => {
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme; //Bearer
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+}).AddJwtBearer( options => {  
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuerSigningKey = true,
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.Zero,
+        ValidIssuer = builder.Configuration["JstSettings:Issuer"],
+        ValidAudience = builder.Configuration["JstSettings:Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration
+        ["JstSettings:Key"]))
+    };
+});
+
+SECURING/PROTECTING END POINTS
+
+You can put [Authorize] at the top of the controller class and that will prevent 
+access to any endpoint. Or you can specify which endpoints to secure by putting 
+[Authorize] above that specific endpoint.
+
+REFRESH TOKEN
+
+The purpose is so that when a request comes in, if the original token 
+has expired, a refresh token can be used to try the request again, which will 
+give them a fresh token. This goes on behind the scenes and is semeless to the 
+user so they have a better experience and not have to log in every 10 minutes.
+
+GLOBAL EXCEPTION HANDLING
+     A way to deal with exceptions globally so we don't have to code to "try/catch" 
+     every indivdual exception
+
+     Build a class to catch all application exceptions
+
+RESPONSE CACHING
+
+- Has to do with creating a temporary store in between GET requests. This is built
+    into .NET Core.
+- Can be configured in the middleware. You could configure hardware specifically for 
+    this as well at the networking level.
+
+PROS / CONS of building response caching at the software level vs. the hardware level.
+    - At the software level the load will be placed on the server 
+        (memory/cache stores etc.). This api will be used by a website with many users
+        so it will be hit many times so the response time could vary as the number of
+        users increases. The app is used by many people. Response caching is about get-
+        -ting a faster response.
+
+PAGING
+
+- Allows clients to request a certain number of records at a time so they don't 
+    have to recieve all the records each time a search is performed.
+
+ODATA (OData)
+
+- 3rd party lib, for/provides ordering, searching and sorting at the query 
+    string level.
+- Use NuGet Package manager to add Microsoft.AspNetCore.OData
+- Add the following to your Program.cs file. (this is only 3 options, there are
+    many to choose from)
+
+    builder.Services.AddControllers().AddOData( options => 
+    {
+        options.Select().Filter().OrderBy();
+    });
+
+- Then add above endpoint/controller method as such:
+    [HttpGet]
+    [EnableQuery]
+- This then allows you the ability to add filtering options within PostMan or 
+    within the query string: 
+    https://localhost:7117/api/v2/countries?$select=name,shortname&$filter=name eq 'Cuba'&$orderby=name
+
